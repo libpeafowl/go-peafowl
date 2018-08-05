@@ -13,6 +13,14 @@ make
 example/go-peafowl -rf example/pcap/http.pcap
 ```
 
+#### Benchmark on a i3
+```
+go test -bench=. -benchmem
+goos: linux
+goarch: amd64
+BenchmarkGetProtocol-4    10000000    163 ns/op    32 B/op    1 allocs/op
+```
+
 
 #### Credits & Acknowledgements
 All wrapped C functions at top of main.go are from [M. Campus](https://github.com/kYroL01)

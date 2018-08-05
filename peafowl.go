@@ -191,7 +191,6 @@ type DPI struct {
 
 // Counter contains statistics on how many packets were detected.
 type Counter struct {
-	//TODO add stats typesu_int32_t unknown_matches=0;
 	HTTP    uint32
 	DNS     uint32
 	BGP     uint32
@@ -213,22 +212,21 @@ func NewDPI() (*DPI, error) {
 	if e == -1 {
 		return nil, fmt.Errorf("dpi_init_stateful failed")
 	}
-
 	return &DPI{}, nil
 }
 
-func (d *DPI) GetProtocol(data []byte, offset int, t time.Time, ciLen, dataLen int) (proto int) {
+func (d *DPI) GetProtocol(data []byte, offset int, t time.Time, ciLen, dataLen int) (l7 int) {
 	var hdr C.struct_pcap_pkthdr
 	hdr.ts.tv_sec = C.dpi_time_secs_t(t.Unix())
 	hdr.ts.tv_usec = C.dpi_time_usecs_t(t.Nanosecond() / 1000)
 	hdr.caplen = C.bpf_u_int32(dataLen) // Trust actual length over ci.Length.
 	hdr.len = C.bpf_u_int32(ciLen)
 
-	proto = int(C.get_protocol(
+	l7 = int(C.get_protocol(
 		(*C.u_char)(unsafe.Pointer(&data[offset])),
 		&hdr,
 	))
-	return proto
+	return l7
 }
 
 func (d *DPI) GetProtocolPair(data []byte, offset int, t time.Time, ciLen, dataLen int) (l4, l7 int) {
