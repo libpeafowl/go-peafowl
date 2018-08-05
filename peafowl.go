@@ -231,18 +231,24 @@ func (d *DPI) GetProtocol(data []byte, offset int, t time.Time, ciLen, dataLen i
 	return proto
 }
 
-func (d *DPI) GetProtocolPair(data []byte, offset int, t time.Time, ciLen, dataLen int) (res string) {
+func (d *DPI) GetProtocolPair(data []byte, offset int, t time.Time, ciLen, dataLen int) (l4, l7 int) {
 	var hdr C.struct_pcap_pkthdr
 	hdr.ts.tv_sec = C.dpi_time_secs_t(t.Unix())
 	hdr.ts.tv_usec = C.dpi_time_usecs_t(t.Nanosecond() / 1000)
 	hdr.caplen = C.bpf_u_int32(dataLen) // Trust actual length over ci.Length.
 	hdr.len = C.bpf_u_int32(ciLen)
 
-	res = C.GoString(C.get_protocol_pair(
+	res := C.GoString(C.get_protocol_pair(
 		(*C.u_char)(unsafe.Pointer(&data[offset])),
 		&hdr,
 	))
-	return res
+
+	if len(res) == 2 {
+		l4 = int(res[0])
+		l7 = int(res[1])
+
+	}
+	return l4, l7
 }
 
 func (d *DPI) ReceiveStats() {

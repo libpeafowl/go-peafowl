@@ -47,11 +47,11 @@ func (a *PcapgoHandle) Close() error {
 
 func main() {
 	flag.Parse()
-	d, err := gopeafowl.NewDPI()
+	dpi, err := gopeafowl.NewDPI()
 	if err != nil {
 		log.Fatal("dpi_init_stateful ERROR")
 	}
-	defer d.Close()
+	defer dpi.Close()
 
 	h, err := NewPcapgoHandle(*pcapFile)
 	if err != nil {
@@ -64,18 +64,16 @@ func main() {
 
 		if err == io.EOF {
 			log.Println("-------------------------------------")
-			log.Println(d.ShowStats())
+			log.Println(dpi.ShowStats())
 			log.Println("-------------------------------------")
 			log.Fatal("reached end of file")
 		} else if err != nil {
 			log.Fatal(err)
 		}
 
-		proto := d.GetProtocol(data, 0, ci.Timestamp, ci.Length, len(data))
+		proto := dpi.GetProtocol(data, 0, ci.Timestamp, ci.Length, len(data))
 		if proto == 8 {
 			log.Printf("http packet with %d bytes", len(data))
 		}
-
 	}
-
 }
