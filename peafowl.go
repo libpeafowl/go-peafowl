@@ -1,12 +1,13 @@
 package peafowl
 
 /*
-#cgo LDFLAGS: ${SRCDIR}/wrapper/libdpi.a
+#cgo LDFLAGS: -L${SRCDIR}/peafowl -lpeafowl
 
 #include <net/ethernet.h>
 #include <pcap.h>
 #include <time.h>
-#include "wrapper/api.h"
+#include "peafowl/peafowl.h"
+
 
 #ifdef WIN32
 #define dpi_time_secs_t long
@@ -36,7 +37,8 @@ package peafowl
 #define MAX_IPv4_ACTIVE_FLOWS 500000
 #define MAX_IPv6_ACTIVE_FLOWS 500000
 
-dpi_library_state_t* state; // the state
+static pfwl_state_t* state;
+static pfwl_dissection_info_t dissection_info;
 struct pcap_pkthdr* header;
 const u_char* packet;
 
@@ -56,133 +58,172 @@ u_int32_t sip_matches=0;
 u_int32_t skype_matches=0;
 u_int32_t ssl_matches=0;
 
-
 // init state
-int init()
+int b_init()
 {
-	state = dpi_init_stateful(SIZE_IPv4_FLOW_TABLE, SIZE_IPv6_FLOW_TABLE, MAX_IPv4_ACTIVE_FLOWS, MAX_IPv6_ACTIVE_FLOWS);
-	ip_offset=sizeof(struct ether_header);
-
-	if(state == NULL) {
-	  return -1;
-	}
-
-	return 0;
+  // C function from Peafowl lib
+  state = pfwl_init();
+  if(state == NULL) {
+      fprintf(stderr, "peafowl init ERROR\n");
+      return -1; // ERROR
   }
+  return 0;
+}
 
-  // identify protocols l7
-  int get_protocol(const u_char* packet, struct pcap_pkthdr *header)
-  {
-	dpi_identification_result_t r;
-	int ID_protocol = -1;
 
-	r = dpi_stateful_identify_application_protocol(state, packet+ip_offset, header->caplen-ip_offset, time(NULL));
+// Converts a pcap datalink type to a pfwl_datalink_type_t
+pfwl_protocol_l2_t _convert_pcap_dlt(int link_type)
+{
+    return pfwl_convert_pcap_dlt(link_type);
+}
 
-	if(r.protocol.l4prot==IPPROTO_TCP){
-		switch(r.protocol.l7prot){
-			case DPI_PROTOCOL_TCP_BGP:
-				++bgp_matches;
-				break;
-			case DPI_PROTOCOL_TCP_HTTP:
-				++http_matches;
-				break;
-			case DPI_PROTOCOL_TCP_POP3:
-				++pop3_matches;
-				break;
-			case DPI_PROTOCOL_TCP_SMTP:
-				++smtp_matches;
-				break;
-			case DPI_PROTOCOL_TCP_SSL:
-				++ssl_matches;
-				break;
-			default:
-				++unknown_matches;
-				break;
-		}
-	}else if(r.protocol.l4prot==IPPROTO_UDP){
-		switch(r.protocol.l7prot){
-			case DPI_PROTOCOL_UDP_DHCP:
-				++dhcp_matches;
-				break;
-			case DPI_PROTOCOL_UDP_DHCPv6:
-				++dhcpv6_matches;
-				break;
-			case DPI_PROTOCOL_UDP_DNS:
-				++dns_matches;
-				break;
-			case DPI_PROTOCOL_UDP_MDNS:
-				++mdns_matches;
-				break;
-			case DPI_PROTOCOL_UDP_NTP:
-				++ntp_matches;
-				break;
-			case DPI_PROTOCOL_UDP_RTP:
-				++rtp_matches;
-				break;
-			case DPI_PROTOCOL_UDP_SIP:
-				++sip_matches;
-				break;
-			case DPI_PROTOCOL_UDP_SKYPE:
-				++skype_matches;
-				break;
-			default:
-				++unknown_matches;
-				break;
-		}
-	}else{
-		++unknown_matches;
-	}
 
-	if(r.protocol.l4prot == IPPROTO_UDP){
-	  if(r.protocol.l7prot < DPI_NUM_UDP_PROTOCOLS){
-		return r.protocol.l7prot;
-	  }
-	} else if(r.protocol.l4prot == IPPROTO_TCP){
-	  if(r.protocol.l7prot < DPI_NUM_TCP_PROTOCOLS){
-		return DPI_NUM_UDP_PROTOCOLS + r.protocol.l7prot;
-	  }
-	}
-	return ID_protocol;
-  }
+// parse packet from L2
+pfwl_status_t _dissect_from_L2(char* packet, uint32_t length,
+                               uint32_t timestamp, pfwl_protocol_l2_t datalink_type)
+{
+    return pfwl_dissect_from_L2(state, (const u_char*) packet,
+                                length, time(NULL),
+                                datalink_type, &dissection_info);
+}
 
-  // identify protocols pairs [l7,l4]
-  char * get_protocol_pair(const u_char* packet, struct pcap_pkthdr *header)
-  {
-	dpi_identification_result_t r;
-	char * res;
-	res = malloc(2 * sizeof(char));
-	memset(res,-1,2);
 
-	r = dpi_stateful_identify_application_protocol(state, packet+ip_offset, header->caplen-ip_offset, time(NULL));
+// parse packet from L3
+pfwl_status_t _dissect_from_L3(char* packet_fromL3, uint32_t length_fromL3,
+                               uint32_t timestamp)
+{
+    return pfwl_dissect_from_L3(state, (const u_char*) packet_fromL3,
+                                length_fromL3, time(NULL), &dissection_info);
+}
 
-	if(r.protocol.l4prot == IPPROTO_UDP){
-	  res[0] = IPPROTO_UDP;
-	  if(r.protocol.l7prot < DPI_NUM_UDP_PROTOCOLS){
-		res[1] = r.protocol.l7prot;
-		return res;
-	  }
-	} else if(r.protocol.l4prot == IPPROTO_TCP){
-	  res[0] = IPPROTO_TCP;
-	  if(r.protocol.l7prot < DPI_NUM_TCP_PROTOCOLS){
-		res[1] = DPI_NUM_UDP_PROTOCOLS + r.protocol.l7prot;
-		return res;
-	  }
-	}
-	return res;
-  }
 
-  // terminate
-  void terminate()
-  {
-	dpi_terminate(state);
-  }
+// parse packet from L4
+pfwl_status_t _dissect_from_L4(char* packet_fromL4, uint32_t length_fromL4,
+                               uint32_t timestamp)
+{
+    return pfwl_dissect_from_L3(state, (const u_char*) packet_fromL4,
+                                length_fromL4, time(NULL), &dissection_info);
+}
+
+
+// enables an L7 protocol dissector
+uint8_t _protocol_L7_enable(pfwl_protocol_l7_t protocol)
+{
+    return pfwl_protocol_l7_enable(state, protocol);
+}
+
+
+// disables an L7 protocol dissector
+uint8_t _protocol_L7_disable(pfwl_protocol_l7_t protocol)
+{
+    return pfwl_protocol_l7_disable(state, protocol);
+}
+
+
+// guesses the protocol looking only at source/destination ports
+pfwl_protocol_l7_t _guess_protocol()
+{
+    return pfwl_guess_protocol(dissection_info);
+}
+
+
+// returns the string represetation of a protocol
+char* _get_L7_protocol_name(pfwl_protocol_l7_t protocol)
+{
+    return pfwl_get_L7_protocol_name(protocol);
+}
+
+
+// returns the protocol id corresponding to a protocol string
+pfwl_protocol_l7_t _get_L7_protocol_id(char* string)
+{
+    return pfwl_get_L7_protocol_id(string);
+}
+
+
+// dissect pachet from L2 and return the L7 protocol name
+char* _get_L7_from_L2(char* packet, struct pcap_pkthdr* header, int link_type)
+{
+    char* name = NULL;
+    // convert L2 type in L2 peafowl type
+    pfwl_protocol_l2_t dlt = pfwl_convert_pcap_dlt(link_type);
+    // call dissection from L2
+    pfwl_status_t status = pfwl_dissect_from_L2(state, (const u_char*) packet,
+                                                header->caplen, time(NULL), dlt, &dissection_info);
+
+    if(status >= PFWL_STATUS_OK) {
+        name = pfwl_get_L7_protocol_name(dissection_info.l7.protocol);
+        return name;
+    }
+    else return "ERROR";
+}
+
+
+// enables the extraction of a specific L7 field for a given protocol
+uint8_t _field_add_L7(char* field)
+{
+    pfwl_field_id_t f = pfwl_get_L7_field_id(field);
+    return pfwl_field_add_L7(state, f);
+}
+
+
+// disables the extraction of a specific L7 field for a given protocol
+uint8_t _field_remove_L7(char* field)
+{
+    pfwl_field_id_t f = pfwl_get_L7_field_id(field);
+    return pfwl_field_remove_L7(state, f);
+}
+
+
+// set the accuracy level of dissection
+uint8_t _set_protocol_accuracy_L7(pfwl_protocol_l7_t protocol,
+                                  pfwl_dissector_accuracy_t accuracy)
+{
+    return pfwl_set_protocol_accuracy_L7(state, protocol, accuracy);
+}
+
+
+// check if the field is present or not
+int _field_present(char* field)
+{
+    pfwl_field_id_t f = pfwl_get_L7_field_id(field);
+    return dissection_info.l7.protocol_fields[f].present;
+}
+
+
+// extracts a specific string field from a list of fields (ret = 0 string set)
+char* _field_string_get(char* field)
+{
+    pfwl_string_t string;
+    pfwl_field_id_t f = pfwl_get_L7_field_id(field);
+    pfwl_field_string_get(dissection_info.l7.protocol_fields, f, &string);
+    return string.value;
+}
+
+
+// extracts a specific numeric field from a list of fields (ret = 0 number set)
+int _field_number_get(char* field)
+{
+    int64_t num;
+    pfwl_field_id_t f = pfwl_get_L7_field_id(field);
+    pfwl_field_number_get(dissection_info.l7.protocol_fields, f, &num);
+    return num;
+}
+
+
+// terminate
+void _terminate()
+{
+	pfwl_terminate(state);
+}
+
+
 */
 import "C"
 import (
 	"fmt"
 	"strings"
 	"time"
-	"unsafe"
 )
 
 type DPI struct {
@@ -208,7 +249,7 @@ type Counter struct {
 }
 
 func NewDPI() (*DPI, error) {
-	e := C.init()
+	e := C.b_init()
 	if e == -1 {
 		return nil, fmt.Errorf("dpi_init_stateful failed")
 	}
@@ -222,10 +263,11 @@ func (d *DPI) GetProtocol(data []byte, offset int, t time.Time, ciLen, dataLen i
 	hdr.caplen = C.bpf_u_int32(dataLen) // Trust actual length over ci.Length.
 	hdr.len = C.bpf_u_int32(ciLen)
 
-	l7 = int(C.get_protocol(
+	/* 	l7 = int(C.get_protocol(
 		(*C.u_char)(unsafe.Pointer(&data[offset])),
 		&hdr,
-	))
+	)) */
+
 	return l7
 }
 
@@ -236,16 +278,16 @@ func (d *DPI) GetProtocolPair(data []byte, offset int, t time.Time, ciLen, dataL
 	hdr.caplen = C.bpf_u_int32(dataLen) // Trust actual length over ci.Length.
 	hdr.len = C.bpf_u_int32(ciLen)
 
-	res := C.GoString(C.get_protocol_pair(
+	/* 	res := C.GoString(C.get_protocol_pair(
 		(*C.u_char)(unsafe.Pointer(&data[offset])),
 		&hdr,
-	))
+	)) */
 
-	if len(res) == 2 {
+	/* 	if len(res) == 2 {
 		l4 = int(res[0])
 		l7 = int(res[1])
 
-	}
+	} */
 	return l4, l7
 }
 
@@ -289,5 +331,5 @@ func (d *DPI) ShowStats() string {
 }
 
 func (d *DPI) Close() {
-	C.terminate()
+	C._terminate()
 }

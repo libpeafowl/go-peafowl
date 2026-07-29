@@ -2,8 +2,12 @@
 NAME?=go-peafowl
 
 all:
-	#@ if [ ! -d "peafowl_lib" ]; then git clone https://github.com/DanieleDeSensi/Peafowl.git peafowl_lib; fi;
-	#@ if [ ! -f peafowl_lib/lib/libdpi.a ]; then make -C peafowl_lib; fi;
+	@ if [ ! -d "./include/peafowl_lib" ]; then git clone https://github.com/DanieleDeSensi/Peafowl.git ./include/peafowl_lib; fi;
+	@ if [ ! -f  ./include/peafowl_lib/build/src/libpeafowl.so ]; then cd ./include/peafowl_lib && mkdir build && cd build && cmake ../ && make; fi;
+	@ if [ ! -d  peafowl ]; then mkdir peafowl; fi;
+	@ if [ -f  ./include/peafowl_lib/build/src/libpeafowl.so ]; then cp ./include/peafowl_lib/build/src/libpeafowl.so peafowl; fi;
+	@ if [ -f  ./include/peafowl_lib/include/peafowl/peafowl.h ]; then cp -r ./include/peafowl_lib/include/peafowl/* peafowl; fi;
+
 	
 	go build -ldflags "-s -w"  -o example/$(NAME) example/*.go
 
